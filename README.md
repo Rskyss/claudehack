@@ -6,6 +6,7 @@
 
 让指定站点使用明确的代理出口，让日常流量继续遵循原有网络设置。
 
+![Repository: v0.1](https://img.shields.io/badge/repository-v0.1-182b40?style=flat-square)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-182b40?style=flat-square)
 ![Python: 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square)
 ![Dependencies: Python standard library](https://img.shields.io/badge/dependencies-stdlib-4b7861?style=flat-square)
@@ -240,6 +241,20 @@ bash -n macos/proxy-guard.sh
 - **Worker 覆盖**：扩展仅包装部分非 module 的 blob/data Worker，未完整覆盖外部 URL Worker、module Worker 和所有 Date 方法。
 - **CLI 隔离**：启动前出口检查与代理环境变量不等于操作系统级网络隔离，也不保证所有子进程都遵循代理设置。
 - **平台认证**：网络连通或第三方 IP 评分不能证明平台不会要求 KYC、验证码或银行卡认证。手机内购也不能被承诺为免 KYC 通道；账单地址应使用发卡行登记的真实地址。
+
+## 开发与版本规范
+
+维护本项目请先阅读 [AGENTS.md](AGENTS.md) 和 [开发进度跟踪](docs/开发进度跟踪.md)，再按 [开发规范](docs/开发规范.md) 执行需求确认、最小修改、测试、独立复查和发布。
+
+主干采用“一个版本，一个提交”，标题使用 `vX.Y 一句话主题`，正文按新增、优化和修复分组。完整的历史验证见 [维护验收记录](docs/维护验收记录.md)；本次 `v0.1` 保留此前两条非版本提交，详见 [版本发布记录](docs/版本发布记录.md)。
+
+首次 clone 后启用本地提交标题检查：
+
+```sh
+git config core.hooksPath .githooks
+```
+
+钩子不替代用户授权、测试或验收，也不限制 API 写入；使用连接器发布时仍需执行相同规则。
 
 ## 参考资料
 
