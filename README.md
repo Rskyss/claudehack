@@ -6,13 +6,13 @@
 
 让指定站点使用明确的代理出口，让日常流量继续遵循原有网络设置。
 
-![Repository: v0.1](https://img.shields.io/badge/repository-v0.1-182b40?style=flat-square)
+![Repository: v0.1.1](https://img.shields.io/badge/repository-v0.1.1-182b40?style=flat-square)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-182b40?style=flat-square)
 ![Python: 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square)
 ![Dependencies: Python standard library](https://img.shields.io/badge/dependencies-stdlib-4b7861?style=flat-square)
 ![Chrome extension: v2.3.0](https://img.shields.io/badge/extension-v2.3.0-c98769?style=flat-square)
 
-[工作原理](#工作原理) · [快速开始](#快速开始) · [项目结构](#项目结构) · [验证与测试](#验证与测试) · [能力边界](#能力边界)
+[安装方式](#安装方式) · [工作原理](#工作原理) · [快速开始](#快速开始) · [项目结构](#项目结构) · [验证与测试](#验证与测试) · [能力边界](#能力边界)
 
 </div>
 
@@ -32,6 +32,18 @@ ClaudeHack 将 **HTTP CONNECT 网关、SOCKS5 分流、PAC、Chrome 扩展与 CL
 | **浏览器环境设置** | Chrome 扩展在匹配页面调整语言、时区，并限制非代理 WebRTC UDP |
 | **CLI 启动校验** | 启动前检查实际出口，注入代理环境变量，提供独立配置目录入口 |
 | **macOS 常驻运行** | 提供 launchd 模板及由 root 管理的代理守护程序部署方案 |
+
+## 安装方式
+
+**这是包含 Chrome 插件的源码项目。** 你可以只安装插件，也可以在 macOS 上部署完整代理环境。当前没有一键安装器，下载 ZIP 本身不会启动代理服务。
+
+| 你的目标 | 应该怎么安装 | 需要什么 |
+| :--- | :--- | :--- |
+| 只使用插件的网页语言、时区和 WebRTC 设置 | 按下方 **A：只安装 Chrome 插件** 加载 `extension` 文件夹 | Chrome；无需 Python 或运行代理服务 |
+| 使用本项目的指定代理出口和域名分流 | 按 **B：完整代理环境** 部署服务、填写上游配置并设置 PAC；插件按 A 单独加载 | macOS、Python、自备可用的上游代理 |
+| 已经装好并正常使用 | 继续使用现有环境 | 无需重新安装或重复启动服务 |
+
+**插件不包含住宅 IP，也不负责配置 PAC 或代理。** 只安装插件，网页仍使用浏览器原有网络出口；完整的网络分流需要本地服务与代理配置配合。
 
 ## 工作原理
 
@@ -55,7 +67,24 @@ flowchart LR
 > [!NOTE]
 > 以下步骤用于新环境的手动配置。已有环境运行正常时，无需重复安装或重置浏览器。
 
-### 1. 准备环境
+### A. 只安装 Chrome 插件
+
+1. 打开 [仓库首页](https://github.com/Rskyss/claudehack)，点击绿色 **Code → Download ZIP**。
+2. 解压 ZIP，找到解压目录中的 **`extension` 文件夹**。通常路径为 `claudehack-main/extension/`，里面应直接包含 `manifest.json`。
+3. 把解压目录放在你准备长期保留的位置。在要使用插件的 Chrome 配置文件中，打开 `chrome://extensions`。
+4. 打开右上角的 **开发者模式**，点击 **加载已解压的扩展程序**。
+5. 选择 **`extension` 文件夹**。不要选择 ZIP 文件、整个 `claudehack-main` 项目目录或单独的 `manifest.json` 文件。
+6. 确认扩展列表出现 **Claude 美区住宅安全护盾**、版本 **2.3.0**，处于启用状态，且没有加载错误；重新加载希望应用设置的网页。
+
+加载后请保留该文件夹。移动或删除它可能导致扩展无法加载。后续更新文件后，在扩展管理页面点击该扩展的刷新按钮，再刷新目标网页。
+
+这条路线只需安装浏览器插件；下方三个 Python 服务属于完整代理路线，无需为了加载插件而运行。语言、时区等页面注入作用于匹配页面及已实现的 API；WebRTC 策略作用于安装扩展的整个 Chrome 配置文件，该配置文件内其他网页也共用这项策略。具体范围见[能力边界](#能力边界)。
+
+### B. 完整代理环境（macOS）
+
+选择这条路线时，先准备可用的上游 HTTP 代理及其凭据。以下命令用于本地代理服务；插件依照 A 路线单独安装。
+
+#### 1. 准备环境
 
 | 依赖 | 用途 |
 | :--- | :--- |
@@ -70,13 +99,14 @@ git clone https://github.com/Rskyss/claudehack.git
 cd claudehack
 ```
 
-### 2. 安装本地文件
+#### 2. 安装本地文件
 
 ```sh
 mkdir -p "$HOME/.config/claude-residential/bin"
 chmod 700 "$HOME/.config/claude-residential"
 cp gateway/*.py gateway/proxy.pac "$HOME/.config/claude-residential/"
 cp bin/* "$HOME/.config/claude-residential/bin/"
+chmod +x "$HOME/.config/claude-residential/bin/"*
 
 # 配置已存在时保留原文件。
 if [ ! -e "$HOME/.config/claude-residential/residential.json" ]; then
@@ -85,7 +115,7 @@ fi
 chmod 600 "$HOME/.config/claude-residential/residential.json"
 ```
 
-### 3. 配置上游代理
+#### 3. 配置上游代理
 
 编辑 `~/.config/claude-residential/residential.json`，填写自己的代理信息。完整示例见 [`residential.example.json`](config/residential.example.json)。
 
@@ -100,7 +130,7 @@ chmod 600 "$HOME/.config/claude-residential/residential.json"
 
 示例中的 `203.0.113.10` 是文档专用地址，不能用于真实联网。`0600` 权限限制文件访问，并不代表凭据经过加密。
 
-### 4. 启动并检查出口
+#### 4. 启动并检查出口
 
 在**三个独立终端**中分别运行以下命令；也可按后文配置 launchd 常驻服务。
 
@@ -121,11 +151,11 @@ python3 "$HOME/.config/claude-residential/pac_server.py"
 curl --noproxy '' --proxy http://127.0.0.1:8121 https://api.ipify.org
 ```
 
-### 5. 接入浏览器或 CLI
+#### 5. 接入浏览器或 CLI
 
 **浏览器**
 
-使用 PAC 地址 `http://127.0.0.1:8899/proxy.pac?v=8`。在独立 Chrome 配置文件中打开 `chrome://extensions`，启用开发者模式，选择「加载已解压的扩展程序」，加载仓库的 [`extension/`](extension/) 目录。
+使用 PAC 地址 `http://127.0.0.1:8899/proxy.pac?v=8`。插件按上面的 A 路线单独加载；加载插件这一步不会自动设置 PAC。
 
 需要强制 PAC 时，由管理员在 Chrome 的 `ProxySettings` 中配置以下字段，并保留已有的其他管理策略：
 
@@ -246,7 +276,7 @@ bash -n macos/proxy-guard.sh
 
 维护本项目请先阅读 [AGENTS.md](AGENTS.md) 和 [开发进度跟踪](docs/开发进度跟踪.md)，再按 [开发规范](docs/开发规范.md) 执行需求确认、最小修改、测试、独立复查和发布。
 
-主干采用“一个版本，一个提交”，标题使用 `vX.Y 一句话主题`，正文按新增、优化和修复分组。完整的历史验证见 [维护验收记录](docs/维护验收记录.md)；本次 `v0.1` 保留此前两条非版本提交，详见 [版本发布记录](docs/版本发布记录.md)。
+主干采用“一个版本，一个提交”，标题使用 `vX.Y 一句话主题`，正文按新增、优化和修复分组。完整的历史验证见 [维护验收记录](docs/维护验收记录.md)；`v0.1` 保留此前两条非版本提交，详见 [版本发布记录](docs/版本发布记录.md)。
 
 首次 clone 后启用本地提交标题检查：
 
