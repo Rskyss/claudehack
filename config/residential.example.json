@@ -1,0 +1,11 @@
+{
+  "host": "203.0.113.10",
+  "port": 12323,
+  "username": "REPLACE_ME",
+  "password": "REPLACE_ME",
+  "expected_ip": "203.0.113.10",
+  "local_proxy": "http://127.0.0.1:8121",
+  "timezone": "America/New_York",
+  "locale": "en_US.UTF-8",
+  "expires_at": "YYYY-MM-DD"
+}

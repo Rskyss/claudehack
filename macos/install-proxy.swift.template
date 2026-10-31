@@ -1,0 +1,57 @@
+import Foundation
+import SystemConfiguration
+
+// 读取最新 PAC 脚本并同步注入 macOS 全局与所有活跃网络接口的代理状态中
+let pacURL = URL(fileURLWithPath: "__USER_HOME__/.config/claude-residential/proxy.pac")
+let js = try String(contentsOf: pacURL, encoding: .utf8)
+
+let store = SCDynamicStoreCreate(nil, "claude-residential-pac" as CFString, nil, nil)!
+let pacLocation = "http://127.0.0.1:8899/proxy.pac?v=8"
+
+func apply(_ mutable: NSMutableDictionary) {
+    mutable["ProxyAutoConfigEnable"] = 1
+    mutable["ProxyAutoConfigURLString"] = pacLocation
+    mutable["ProxyAutoConfigJavaScript"] = js
+    mutable["HTTPEnable"] = 0
+    mutable["HTTPSEnable"] = 0
+}
+
+func patched(_ raw: CFPropertyList) -> NSMutableDictionary? {
+    guard let dict = raw as? NSDictionary else { return nil }
+    let mutable = dict.mutableCopy() as! NSMutableDictionary
+    apply(mutable)
+    if let scoped = mutable["__SCOPED__"] as? NSDictionary {
+        let scopedMut = scoped.mutableCopy() as! NSMutableDictionary
+        for case let key as String in scopedMut.allKeys {
+            guard let sub = scopedMut[key] as? NSDictionary else { continue }
+            let subMut = sub.mutableCopy() as! NSMutableDictionary
+            apply(subMut)
+            scopedMut[key] = subMut
+        }
+        mutable["__SCOPED__"] = scopedMut
+    }
+    return mutable
+}
+
+var keys: [String] = ["State:/Network/Global/Proxies"]
+if let serviceKeys = SCDynamicStoreCopyKeyList(store, "State:/Network/Service/[^/]+/Proxies" as CFString) as? [String] {
+    for k in serviceKeys where !keys.contains(k) {
+        keys.append(k)
+    }
+}
+
+var failed = false
+for key in keys {
+    guard let raw = SCDynamicStoreCopyValue(store, key as CFString) else {
+        continue
+    }
+    guard let value = patched(raw) else {
+        fputs("unreadable \(key)\n", stderr)
+        failed = true
+        continue
+    }
+    let ok = SCDynamicStoreSetValue(store, key as CFString, value)
+    print("\(key) \(ok)")
+    if !ok { failed = true }
+}
+exit(failed ? 1 : 0)

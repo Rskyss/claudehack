@@ -1,0 +1,15 @@
+# Live credentials and machine-specific settings
+residential.json
+.env
+.env.*
+!.env.example
+*.log
+*.pyc
+__pycache__/
+.DS_Store
+maintenance/
+backup/
+backups/
+# Compiled local helpers and generated templates
+install-proxy
+build/

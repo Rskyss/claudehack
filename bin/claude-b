@@ -1,0 +1,4 @@
+#!/bin/bash
+# Claude 多账号 B 入口（自动复用底层住宅 IP 门禁）
+export CLAUDE_CONFIG_DIR="$HOME/.claude-b"
+exec "$HOME/.config/claude-residential/bin/claude" "$@"

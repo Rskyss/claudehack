@@ -1,0 +1,89 @@
+#!/bin/bash
+# Claude CLI 底层全局住宅 IP 门禁封装
+# 无论从交互式终端、脚本还是第三方编辑器调用，均强制校验并锁定静态住宅 IP
+
+set -euo pipefail
+
+CONFIG_FILE="$HOME/.config/claude-residential/residential.json"
+REAL_CLAUDE="$HOME/.local/bin/claude"
+
+if [[ ! -x "$REAL_CLAUDE" ]]; then
+    echo "❌ 未找到底层 Claude 可执行文件: $REAL_CLAUDE" >&2
+    exit 1
+fi
+
+# 仅查询版本号或帮助说明时无需发起外部网络测速，直接响应
+if [[ "${1:-}" == "--version" || "${1:-}" == "-v" || "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    exec "$REAL_CLAUDE" "$@"
+fi
+
+# 从统一配置文件读取代理端口与目标住宅 IP
+LOCAL_PROXY="http://127.0.0.1:8121"
+REQUIRED_IP="203.0.113.10"
+if [[ -f "$CONFIG_FILE" ]]; then
+    parsed=$(/usr/bin/python3 -c '
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get("local_proxy", "http://127.0.0.1:8121"))
+    print(d.get("expected_ip", "203.0.113.10"))
+except Exception:
+    print("http://127.0.0.1:8121")
+    print("203.0.113.10")
+' "$CONFIG_FILE")
+    LOCAL_PROXY=$(printf '%s\n' "$parsed" | sed -n '1p')
+    REQUIRED_IP=$(printf '%s\n' "$parsed" | sed -n '2p')
+fi
+
+PROXY_PORT="${LOCAL_PROXY##*:}"
+
+# 1. 确保本地住宅网关存活（若意外退出则自动唤醒）
+if ! /usr/sbin/lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    /bin/launchctl kickstart -k "gui/$(id -u)/local.claude-residential-retry" >/dev/null 2>&1 || true
+    sleep 0.5
+fi
+
+if ! /usr/sbin/lsof -nP -iTCP:"$PROXY_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "❌ Claude 已熔断拦截启动：本地住宅网关 ($LOCAL_PROXY) 未运行。" >&2
+    echo "   为防止账号风控，已禁止回退到日常 VPN。" >&2
+    exit 1
+fi
+
+# 2. 实时核验真实出站 IP（主备双检测源，避免单一测速站故障误拦截）
+ACTUAL_IP=$(/usr/bin/curl -sS --connect-timeout 8 --max-time 12 -x "$LOCAL_PROXY" https://api.ipify.org 2>/dev/null | tr -d '[:space:]') || ACTUAL_IP=""
+if [[ -z "$ACTUAL_IP" ]]; then
+    ACTUAL_IP=$(/usr/bin/curl -sS --connect-timeout 8 --max-time 12 -x "$LOCAL_PROXY" https://ipinfo.io/ip 2>/dev/null | tr -d '[:space:]') || ACTUAL_IP=""
+fi
+
+if [[ -z "$ACTUAL_IP" ]]; then
+    echo "❌ Claude 已熔断拦截启动：无法通过住宅通道 ($LOCAL_PROXY) 获取出站 IP（请确认日常前置 VPN 已开启，且住宅节点未到期）。" >&2
+    echo "   为防止账号风控，已禁止回退到日常 VPN。" >&2
+    exit 1
+fi
+
+if [[ "$ACTUAL_IP" != "$REQUIRED_IP" ]]; then
+    echo "❌ Claude 已熔断拦截启动：当前出站 IP ($ACTUAL_IP) 与锁定的美国住宅 IP ($REQUIRED_IP) 不一致！" >&2
+    echo "   为防止异地机房 IP 触发封号，本次启动已终止。" >&2
+    exit 1
+fi
+
+# 状态信息仅输出至 stderr，避免污染非交互式 JSON 标准输出
+echo "✅ Claude 住宅出口核验通过: ${ACTUAL_IP} | 美东时区已对齐 (America/New_York)" >&2
+
+CLAUDE_NO_PROXY="localhost,127.0.0.1,::1,mcp.tavily.com,api.tavily.com,.tavily.com"
+
+# 锁定网络代理与美东本土时区/语言特征，消除东八区与中文系统遥测信号
+export TZ="America/New_York"
+export LANG="en_US.UTF-8"
+export LC_ALL="en_US.UTF-8"
+export LANGUAGE="en_US:en"
+export HTTP_PROXY="$LOCAL_PROXY"
+export HTTPS_PROXY="$LOCAL_PROXY"
+export ALL_PROXY="$LOCAL_PROXY"
+export http_proxy="$LOCAL_PROXY"
+export https_proxy="$LOCAL_PROXY"
+export all_proxy="$LOCAL_PROXY"
+export NO_PROXY="$CLAUDE_NO_PROXY"
+export no_proxy="$CLAUDE_NO_PROXY"
+
+exec "$REAL_CLAUDE" "$@"
