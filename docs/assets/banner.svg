@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-labelledby="title desc">
+  <title id="title">ClaudeHack — Local proxy toolkit for macOS</title>
+  <desc id="desc">A dark navy project banner with a local gateway connecting a client to an upstream proxy.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M 32 0 L 0 0 0 32" fill="none" stroke="#243248" stroke-width="0.7"/>
+    </pattern>
+    <linearGradient id="fade" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#111c2e"/>
+      <stop offset="1" stop-color="#14253a"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="300" rx="16" fill="url(#fade)"/>
+  <rect x="640" width="560" height="300" rx="16" fill="url(#grid)" opacity="0.7"/>
+  <rect x="48" y="43" width="28" height="4" rx="2" fill="#e7a486"/>
+  <text x="88" y="51" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" letter-spacing="2.4" fill="#9cb0c8">LOCAL NETWORK TOOLKIT</text>
+  <text x="46" y="130" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="700" letter-spacing="-2" fill="#f3f6fb">ClaudeHack<tspan fill="#e7a486">.</tspan></text>
+  <text x="49" y="174" font-family="Arial, Helvetica, sans-serif" font-size="21" fill="#bbc9da">Explicit routes. Local control.</text>
+  <text x="49" y="251" font-family="Arial, Helvetica, sans-serif" font-size="12" letter-spacing="1.6" fill="#8da4bf">HTTP CONNECT  /  SOCKS5 + PAC  /  CHROME</text>
+  <g fill="none" stroke="#577896" stroke-width="2">
+    <path d="M 780 150 H 842 M 958 150 H 1020"/>
+    <path d="M 832 145 L 842 150 L 832 155 M 1010 145 L 1020 150 L 1010 155"/>
+  </g>
+  <rect x="686" y="115" width="94" height="70" rx="12" fill="#182b40" stroke="#3c566f"/>
+  <path d="M 714 139 L 725 150 L 714 161 M 734 162 H 751" fill="none" stroke="#a9bfd6" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="842" y="92" width="116" height="116" rx="22" fill="#20374a" stroke="#e7a486" stroke-width="1.5"/>
+  <path d="M 900 116 L 923 125 V 147 C 923 164 911 176 900 182 C 889 176 877 164 877 147 V 125 Z" fill="none" stroke="#e7a486" stroke-width="2.5" stroke-linejoin="round"/>
+  <path d="M 889 148 L 897 156 L 912 139" fill="none" stroke="#e7a486" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="1020" y="115" width="94" height="70" rx="12" fill="#182b40" stroke="#3c566f"/>
+  <circle cx="1067" cy="150" r="20" fill="none" stroke="#a9bfd6" stroke-width="2"/>
+  <ellipse cx="1067" cy="150" rx="8" ry="20" fill="none" stroke="#a9bfd6" stroke-width="1.5"/>
+  <path d="M 1047 150 H 1087" fill="none" stroke="#a9bfd6" stroke-width="1.5"/>
+  <g font-family="Arial, Helvetica, sans-serif" font-size="10" letter-spacing="1.8" fill="#8da4bf" text-anchor="middle">
+    <text x="733" y="236">CLIENT</text>
+    <text x="900" y="236">GATEWAY</text>
+    <text x="1067" y="236">UPSTREAM</text>
+  </g>
+</svg>

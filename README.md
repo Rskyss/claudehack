@@ -1,95 +1,255 @@
-# claudehack
+<div align="center">
 
-macOS 上的本地 HTTP 代理网关、SOCKS5 域名分流、PAC 与 Chrome 扩展源码。这个仓库保存已在本机使用的组件及最小维护修复，提供脱敏配置示例，不包含真实代理凭据、账号资料、浏览器配置文件或运行日志。
+![ClaudeHack — Local proxy toolkit for macOS](docs/assets/banner.svg)
 
-## 组件
+**面向 macOS 的本地代理与域名分流工具集**
 
-| 路径 | 用途 |
-| --- | --- |
-| `gateway/retry_proxy.py` | HTTP / CONNECT 网关，监听 `127.0.0.1:8121`，通过配置指定的上游代理转发 |
-| `gateway/split_proxy.py` | SOCKS5 分流，监听 `127.0.0.1:8687`；保护域名经 HTTP 网关，其他目标走系统默认网络 |
-| `gateway/proxy.pac` | 78 个保护域名后缀、10 个豁免子域；保护目标的 PAC 返回值不包含 DIRECT |
-| `gateway/pac_server.py` | 在 `127.0.0.1:8899` 提供 PAC |
-| `extension/` | 现有 Chrome 扩展 v2.3.0；匹配页面的语言/时区设置及 WebRTC 限制 |
-| `bin/` | Claude CLI 启动包装器及独立配置目录入口 |
-| `macos/` | 系统代理守护脚本、Swift helper 源码模板和 launchd 模板 |
-| `tests/` | 不读取真实凭据、不访问外网的回归测试 |
+让指定站点使用明确的代理出口，让日常流量继续遵循原有网络设置。
 
-## 这次维护修复了什么
+![Platform: macOS](https://img.shields.io/badge/platform-macOS-182b40?style=flat-square)
+![Python: 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square)
+![Dependencies: Python standard library](https://img.shields.io/badge/dependencies-stdlib-4b7861?style=flat-square)
+![Chrome extension: v2.3.0](https://img.shields.io/badge/extension-v2.3.0-c98769?style=flat-square)
 
-1. 网关配置丢失、损坏或必要字段无效时拒绝新连接，移除源码中的备用凭据。
-2. 竞速连接超时结束与成功 socket 移交使用同一把锁，避免调用方退出后仍产生无人接收的成功连接；转发失败时关闭已取得的上游连接。
-3. root 守护脚本与 helper 放到 `/Library/PrivilegedHelperTools/local.claude-residential/`，由 root 拥有；root 日志使用 `/var/log/claude-residential-proxy-guard.log`。不再让 root 从用户可写目录执行脚本或二进制。
+[工作原理](#工作原理) · [快速开始](#快速开始) · [项目结构](#项目结构) · [验证与测试](#验证与测试) · [能力边界](#能力边界)
 
-现有分流名单、代理端口、并发数、重试次数、超时参数与扩展行为没有因这次维护而调整。公开版仅把机器路径改为用户目录或模板占位符，并使用示例地址替代实际出口。
+</div>
 
-## 本地配置与运行
+---
 
-需要 Python 3.9+；使用 macOS helper 时需要 Swift 编译器。测试只使用 Python 标准库。
+## 项目概览
 
-以下用于新环境手动配置，**已运行正常的环境无需重复安装或重置浏览器**。
+ClaudeHack 将 **HTTP CONNECT 网关、SOCKS5 分流、PAC、Chrome 扩展与 CLI 出口校验** 组合为一套可检查、可维护的本地网络工具。适用于需要为 Claude 及相关站点配置固定代理出口，同时保留日常网络使用方式的 macOS 环境。
+
+仓库提供源码、配置示例、服务模板与离线回归测试。实际代理凭据、账号资料、浏览器用户数据和运行日志均不包含在仓库中。
+
+| 能力 | 实现方式 |
+| :--- | :--- |
+| **按域名分流** | PAC 与 SOCKS5 分流器使用 78 个保护域名后缀、10 个豁免子域 |
+| **代理失败时拒绝请求** | 命中保护名单的 PAC 结果不含 `DIRECT`；网关配置无效时拒绝新连接 |
+| **连接重试与清理** | 错峰并发、渐进退避，并处理超时后的迟到连接和转发失败资源回收 |
+| **浏览器环境设置** | Chrome 扩展在匹配页面调整语言、时区，并限制非代理 WebRTC UDP |
+| **CLI 启动校验** | 启动前检查实际出口，注入代理环境变量，提供独立配置目录入口 |
+| **macOS 常驻运行** | 提供 launchd 模板及由 root 管理的代理守护程序部署方案 |
+
+## 工作原理
+
+```mermaid
+flowchart LR
+    Browser[浏览器] --> PAC[PAC 域名规则]
+    PAC -->|保护域名| Gateway[HTTP 网关 · 8121]
+    PAC -->|默认路由| SOCKS[SOCKS5 分流 · 8687]
+    SOCKS -->|保护域名| Gateway
+    SOCKS -->|其他域名| Default[系统默认网络]
+    PAC -.->|默认路由的 DIRECT 回退| Default
+    CLI[Claude CLI 包装器] -->|出口校验与代理配置| Gateway
+    Gateway --> Upstream[配置的上游代理]
+    Upstream --> Destination[目标站点]
+```
+
+**保护范围由名单决定。** 普通网站及明确豁免的子域继续使用系统默认网络。PAC 服务监听 `127.0.0.1:8899`；三个本地服务均只监听回环地址。
+
+## 快速开始
+
+> [!NOTE]
+> 以下步骤用于新环境的手动配置。已有环境运行正常时，无需重复安装或重置浏览器。
+
+### 1. 准备环境
+
+| 依赖 | 用途 |
+| :--- | :--- |
+| macOS | 运行环境；系统服务模板使用 launchd |
+| Python 3.9+ | 运行代理服务与回归测试，无需安装第三方 Python 依赖 |
+| Chrome | 使用浏览器扩展时需要 |
+| Swift 编译器 | 仅在编译可选的 macOS 代理守护 helper 时需要 |
+| Node.js | 仅用于可选的扩展 JavaScript 语法检查 |
+
+```sh
+git clone https://github.com/Rskyss/claudehack.git
+cd claudehack
+```
+
+### 2. 安装本地文件
 
 ```sh
 mkdir -p "$HOME/.config/claude-residential/bin"
 chmod 700 "$HOME/.config/claude-residential"
 cp gateway/*.py gateway/proxy.pac "$HOME/.config/claude-residential/"
 cp bin/* "$HOME/.config/claude-residential/bin/"
-# 只在配置尚不存在时创建示例，避免覆盖既有凭据。
+
+# 配置已存在时保留原文件。
 if [ ! -e "$HOME/.config/claude-residential/residential.json" ]; then
   (umask 077; cp config/residential.example.json "$HOME/.config/claude-residential/residential.json")
 fi
 chmod 600 "$HOME/.config/claude-residential/residential.json"
 ```
 
-编辑 `residential.json`，填写自己的上游地址、端口、用户名、密码及预期出口 IP。示例 `203.0.113.10` 是文档地址，不能用于真实联网。文件权限保护不等于加密存储。`expires_at` 只是维护记录，当前没有按到期日期自动提醒的功能。
+### 3. 配置上游代理
 
-在三个终端中分别启动：
+编辑 `~/.config/claude-residential/residential.json`，填写自己的代理信息。完整示例见 [`residential.example.json`](config/residential.example.json)。
+
+| 字段 | 说明 |
+| :--- | :--- |
+| `host` / `port` | 上游 HTTP 代理地址与端口 |
+| `username` / `password` | 上游代理凭据 |
+| `expected_ip` | CLI 启动时要求匹配的公网出口 IP |
+| `local_proxy` | CLI 使用的本地代理地址，默认 `http://127.0.0.1:8121` |
+| `timezone` / `locale` | 维护记录；当前扩展和 CLI 的时区、语言仍由代码中的设置决定 |
+| `expires_at` | 到期日记录，当前不触发自动提醒或按日期拦截 |
+
+示例中的 `203.0.113.10` 是文档专用地址，不能用于真实联网。`0600` 权限限制文件访问，并不代表凭据经过加密。
+
+### 4. 启动并检查出口
+
+在**三个独立终端**中分别运行以下命令；也可按后文配置 launchd 常驻服务。
 
 ```sh
+# 终端 A：HTTP / CONNECT 网关
 python3 "$HOME/.config/claude-residential/retry_proxy.py"
+
+# 终端 B：SOCKS5 分流
 python3 "$HOME/.config/claude-residential/split_proxy.py"
+
+# 终端 C：PAC 服务
 python3 "$HOME/.config/claude-residential/pac_server.py"
 ```
 
-通过网关检查出口：
+通过网关查询出口，并与自己的 `expected_ip` 对照：
 
 ```sh
 curl --noproxy '' --proxy http://127.0.0.1:8121 https://api.ipify.org
 ```
 
-浏览器使用 PAC 地址 `http://127.0.0.1:8899/proxy.pac?v=8`。需要强制 PAC 时，由管理员配置 Chrome 的 `ProxySettings`（`ProxyMode=pac_script`、`ProxyPacMandatory=true`、`ProxyPacUrl` 为上述地址）；不要覆盖已有的其他管理策略。独立 Chrome 配置文件中可通过 `chrome://extensions` 加载 `extension/`。
+### 5. 接入浏览器或 CLI
 
-CLI 包装器默认调用 `$HOME/.local/bin/claude`。把 `$HOME/.config/claude-residential/bin` 放在 PATH 前面即可使用。启动前核验出口和代理环境变量不能代替操作系统级网络隔离；`--help`、`--version` 不联网检查。运行本仓库的测试不需要安装或登录 Claude。
+**浏览器**
 
-## macOS 常驻服务与权限
+使用 PAC 地址 `http://127.0.0.1:8899/proxy.pac?v=8`。在独立 Chrome 配置文件中打开 `chrome://extensions`，启用开发者模式，选择「加载已解压的扩展程序」，加载仓库的 [`extension/`](extension/) 目录。
 
-`macos/launchd/` 的三个 LaunchAgent 模板需要先替换：
+需要强制 PAC 时，由管理员在 Chrome 的 `ProxySettings` 中配置以下字段，并保留已有的其他管理策略：
 
-- `__USER_HOME__`：用户目录绝对路径。
-- `__PYTHON__`：所用 Python 3.9+ 的可执行文件绝对路径。
+| 字段 | 值 |
+| :--- | :--- |
+| `ProxyMode` | `pac_script` |
+| `ProxyPacMandatory` | `true` |
+| `ProxyPacUrl` | `http://127.0.0.1:8899/proxy.pac?v=8` |
 
-替换后检查 plist，再安装到该用户的 `~/Library/LaunchAgents/`。模板不是开箱即用的系统配置，仓库不自动覆盖或启用机器的服务。
+**Claude CLI**
 
-如果已有 VPN 会覆盖系统 PAC，可使用 `macos/proxy-guard.sh` 配合 Swift helper。先把 `macos/install-proxy.swift.template` 中的 `__USER_HOME__` 替换为实际目录，在普通用户权限下编译；**管理员安装时必须将脚本和编译结果复制到 root 拥有、普通用户不可写的上述系统目录**，不能用指向用户目录的软链接。文件及目录权限使用 0755，LaunchDaemon plist 使用 root:wheel / 0644，日志使用 root:wheel / 0600。
-
-LaunchDaemon 使用仓库中的 `local.claude-residential-proxy-guard.plist`。启用前核对路径、权限和 `plutil -lint` 结果。helper 仍从该用户目录读取 PAC 内容作为配置数据；root 执行的脚本与二进制必须独立受保护。更新 helper 后也应重新由管理员安装，不要把运行路径改回用户可写目录。
-
-## 测试和验收范围
+包装器默认调用 `$HOME/.local/bin/claude`。确认底层 CLI 已安装，再把包装器目录放在 PATH 前面：
 
 ```sh
+export PATH="$HOME/.config/claude-residential/bin:$PATH"
+```
+
+`claude-a`、`claude-b` 分别使用独立的 Claude 配置目录。`--help` 与 `--version` 不执行联网检查；回归测试无需安装或登录 Claude。
+
+## 项目结构
+
+| 路径 | 职责 |
+| :--- | :--- |
+| [`gateway/retry_proxy.py`](gateway/retry_proxy.py) | HTTP / CONNECT 网关，端口 `8121` |
+| [`gateway/split_proxy.py`](gateway/split_proxy.py) | SOCKS5 域名分流，端口 `8687` |
+| [`gateway/proxy.pac`](gateway/proxy.pac) | 浏览器自动代理规则 |
+| [`gateway/pac_server.py`](gateway/pac_server.py) | 本地 PAC 服务，端口 `8899` |
+| [`extension/`](extension/) | Chrome 扩展 v2.3.0 |
+| [`bin/`](bin/) | Claude CLI 包装器与配置目录入口 |
+| [`config/`](config/) | 脱敏配置示例 |
+| [`macos/`](macos/) | 守护脚本、Swift helper 源码模板与 launchd 模板 |
+| [`tests/`](tests/) | 离线回归测试 |
+
+## macOS 常驻部署
+
+常驻运行使用 [`macos/launchd/`](macos/launchd/) 中的模板。模板需要填写实际路径，仓库不会自动覆盖或启用系统服务。
+
+<details>
+<summary><strong>LaunchAgent：以普通用户身份运行三个本地服务</strong></summary>
+
+替换三个 LaunchAgent 模板中的占位符：
+
+| 占位符 | 替换内容 |
+| :--- | :--- |
+| `__USER_HOME__` | 用户目录的绝对路径 |
+| `__PYTHON__` | Python 3.9+ 可执行文件的绝对路径 |
+
+用 `plutil -lint` 检查替换后的 plist，再安装到该用户的 `~/Library/LaunchAgents/`。保持服务以普通用户身份运行。
+
+</details>
+
+<details>
+<summary><strong>可选 LaunchDaemon：在系统代理被覆盖时恢复 PAC</strong></summary>
+
+如果已有 VPN 会覆盖系统 PAC，可使用 [`proxy-guard.sh`](macos/proxy-guard.sh) 配合 Swift helper。
+
+1. 替换 [`install-proxy.swift.template`](macos/install-proxy.swift.template) 中的 `__USER_HOME__`，在普通用户权限下编译。
+2. 由管理员将脚本和编译结果复制到 `/Library/PrivilegedHelperTools/local.claude-residential/`，不使用指向用户目录的软链接。
+3. 安装 [`local.claude-residential-proxy-guard.plist`](macos/launchd/local.claude-residential-proxy-guard.plist)，核对路径并通过 `plutil -lint` 检查后启用。
+
+| 对象 | 所有者 / 权限 |
+| :--- | :--- |
+| helper 目录、脚本和二进制 | `root:wheel` / `0755`，普通用户不可写 |
+| LaunchDaemon plist | `root:wheel` / `0644` |
+| `/var/log/claude-residential-proxy-guard.log` | `root:wheel` / `0600` |
+
+helper 从用户目录读取 PAC 作为配置数据，但 root 执行的脚本和二进制必须放在受保护的系统目录。更新 helper 后也应重新由管理员安装。
+
+</details>
+
+## 验证与测试
+
+### 本地复测
+
+```sh
+# 离线回归测试：不读取真实凭据、不访问外网
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
+
+# 可选语法检查
 node --check extension/shield.js
 bash -n macos/proxy-guard.sh
 ```
 
-2026-10-31 本机维护验证了配置异常、正常热加载、CONNECT 成功、拒绝连接重试上限、超时后的迟到连接以及转发异常清理。临时与正式网关的出口核验通过；Stripe 脚本返回 200。未登录的命令行探测对 Claude、Persona 完成 TLS 连接但得到 HTTP 403，这不代表账号或付款已通过验证。
+### 已记录的验收
 
-范围限制：
+以下是 **2026-10-31 的本机验证记录**，不是持续集成或实时服务状态。
 
-- 只有已列入名单且实际使用这些代理组件的请求受分流规则约束；新增的第三方域名和银行验证页面不保证覆盖。
-- Chrome 配置文件提供存储层面的逻辑隔离，不是独立硬件或操作系统。
-- 扩展的 Worker 注入只覆盖部分非 module 的 blob/data Worker；外部 URL、module Worker 和所有 Date 方法未完整覆盖。
-- 本地连通、IP 检测与第三方信誉分不能证明平台不会要求 KYC、验证码或银行卡认证。
-- 手机内购不能被承诺为免 KYC 通道。账单地址应填写发卡行登记的真实地址，不应按代理 IP 所在城市填写。
+| 检查 | 结果与范围 |
+| :--- | :--- |
+| 网关回归测试 | **9 项通过**；覆盖配置异常、热加载、正常隧道、重试上限、迟到连接和异常清理 |
+| HTTP / HTTPS 出口 | 临时与正式网关的出口核验通过 |
+| Stripe 脚本请求 | HTTP `200` |
+| Claude / Persona 命令行探测 | TLS 连接成功，HTTP `403`；仅能确认传输连通，不能视为账号或支付验证通过 |
+| root 守护程序 | 可执行文件迁至 root 管理目录，运行状态与权限验收通过 |
 
-参考：[Claude 身份认证说明](https://support.claude.com/en/articles/14328960-identity-verification-on-claude)、[Stripe 账单地址核验](https://docs.stripe.com/disputes/prevention/verification)。
+<details>
+<summary><strong>维护修复记录</strong></summary>
+
+- **配置错误回退**：配置缺失、损坏或必要字段无效时拒绝新连接，移除源码内置备用凭据。
+- **连接资源清理**：竞速结束与成功 socket 移交共用锁，避免调用方退出后的迟到连接失去所有者；转发异常时关闭已取得的上游连接。
+- **特权执行路径**：root 守护脚本与 helper 迁入 root 管理目录，日志迁至系统日志目录。
+
+本次维护保留原有分流名单、端口、并发数、重试次数、超时参数和扩展行为。公开源码仅将机器路径改为用户目录或模板占位符，并使用示例地址替代实际出口。
+
+</details>
+
+## 能力边界
+
+这套工具解决的是本地路由、配置管理与连接可靠性问题。使用时需要了解以下边界：
+
+- **域名覆盖**：只有已列入名单且实际使用这些代理组件的请求受规则约束。新增第三方域名和银行验证页面不保证覆盖。
+- **配置文件隔离**：Chrome 独立配置文件提供存储层面的逻辑隔离，不等于独立硬件或操作系统。
+- **Worker 覆盖**：扩展仅包装部分非 module 的 blob/data Worker，未完整覆盖外部 URL Worker、module Worker 和所有 Date 方法。
+- **CLI 隔离**：启动前出口检查与代理环境变量不等于操作系统级网络隔离，也不保证所有子进程都遵循代理设置。
+- **平台认证**：网络连通或第三方 IP 评分不能证明平台不会要求 KYC、验证码或银行卡认证。手机内购也不能被承诺为免 KYC 通道；账单地址应使用发卡行登记的真实地址。
+
+## 参考资料
+
+- [Claude · Identity verification](https://support.claude.com/en/articles/14328960-identity-verification-on-claude)
+- [Stripe · Card verification checks](https://docs.stripe.com/disputes/prevention/verification)
+
+---
+
+<div align="center">
+
+<sub>本地配置 · 明确分流 · 可复查的验证记录</sub>
+
+</div>
