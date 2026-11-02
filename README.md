@@ -6,11 +6,11 @@
 
 让指定站点使用明确的代理出口，让日常流量继续遵循原有网络设置。
 
-![Repository: v0.1.1](https://img.shields.io/badge/repository-v0.1.1-182b40?style=flat-square)
+![Repository: v0.1.2](https://img.shields.io/badge/repository-v0.1.2-182b40?style=flat-square)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-182b40?style=flat-square)
 ![Python: 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square)
 ![Dependencies: Python standard library](https://img.shields.io/badge/dependencies-stdlib-4b7861?style=flat-square)
-![Chrome extension: v2.3.0](https://img.shields.io/badge/extension-v2.3.0-c98769?style=flat-square)
+![Chrome extension: v2.3.1](https://img.shields.io/badge/extension-v2.3.1-c98769?style=flat-square)
 
 [安装方式](#安装方式) · [工作原理](#工作原理) · [快速开始](#快速开始) · [项目结构](#项目结构) · [验证与测试](#验证与测试) · [能力边界](#能力边界)
 
@@ -29,7 +29,7 @@ ClaudeHack 将 **HTTP CONNECT 网关、SOCKS5 分流、PAC、Chrome 扩展与 CL
 | **按域名分流** | PAC 与 SOCKS5 分流器使用 78 个保护域名后缀、10 个豁免子域 |
 | **代理失败时拒绝请求** | 命中保护名单的 PAC 结果不含 `DIRECT`；网关配置无效时拒绝新连接 |
 | **连接重试与清理** | 错峰并发、渐进退避，并处理超时后的迟到连接和转发失败资源回收 |
-| **浏览器环境设置** | Chrome 扩展在匹配页面调整语言、时区，并限制非代理 WebRTC UDP |
+| **浏览器环境设置** | Chrome 扩展在匹配页面调整语言并限制非代理 WebRTC UDP；时间接口保持浏览器原生行为 |
 | **CLI 启动校验** | 启动前检查实际出口，注入代理环境变量，提供独立配置目录入口 |
 | **macOS 常驻运行** | 提供 launchd 模板及由 root 管理的代理守护程序部署方案 |
 
@@ -39,7 +39,7 @@ ClaudeHack 将 **HTTP CONNECT 网关、SOCKS5 分流、PAC、Chrome 扩展与 CL
 
 | 你的目标 | 应该怎么安装 | 需要什么 |
 | :--- | :--- | :--- |
-| 只使用插件的网页语言、时区和 WebRTC 设置 | 按下方 **A：只安装 Chrome 插件** 加载 `extension` 文件夹 | Chrome；无需 Python 或运行代理服务 |
+| 只使用插件的网页语言和 WebRTC 设置 | 按下方 **A：只安装 Chrome 插件** 加载 `extension` 文件夹 | Chrome；无需 Python 或运行代理服务 |
 | 使用本项目的指定代理出口和域名分流 | 按 **B：完整代理环境** 部署服务、填写上游配置并设置 PAC；插件按 A 单独加载 | macOS、Python、自备可用的上游代理 |
 | 已经装好并正常使用 | 继续使用现有环境 | 无需重新安装或重复启动服务 |
 
@@ -74,11 +74,11 @@ flowchart LR
 3. 把解压目录放在你准备长期保留的位置。在要使用插件的 Chrome 配置文件中，打开 `chrome://extensions`。
 4. 打开右上角的 **开发者模式**，点击 **加载已解压的扩展程序**。
 5. 选择 **`extension` 文件夹**。不要选择 ZIP 文件、整个 `claudehack-main` 项目目录或单独的 `manifest.json` 文件。
-6. 确认扩展列表出现 **Claude 美区住宅安全护盾**、版本 **2.3.0**，处于启用状态，且没有加载错误；重新加载希望应用设置的网页。
+6. 确认扩展列表出现 **Claude 美区住宅安全护盾**、版本 **2.3.1**，处于启用状态，且没有加载错误；重新加载希望应用设置的网页。
 
 加载后请保留该文件夹。移动或删除它可能导致扩展无法加载。后续更新文件后，在扩展管理页面点击该扩展的刷新按钮，再刷新目标网页。
 
-这条路线只需安装浏览器插件；下方三个 Python 服务属于完整代理路线，无需为了加载插件而运行。语言、时区等页面注入作用于匹配页面及已实现的 API；WebRTC 策略作用于安装扩展的整个 Chrome 配置文件，该配置文件内其他网页也共用这项策略。具体范围见[能力边界](#能力边界)。
+这条路线只需安装浏览器插件；下方三个 Python 服务属于完整代理路线，无需为了加载插件而运行。语言等页面注入作用于匹配页面及已实现的 API；日期与时区由浏览器原生接口提供；WebRTC 策略作用于安装扩展的整个 Chrome 配置文件，该配置文件内其他网页也共用这项策略。具体范围见[能力边界](#能力边界)。
 
 ### B. 完整代理环境（macOS）
 
@@ -125,7 +125,7 @@ chmod 600 "$HOME/.config/claude-residential/residential.json"
 | `username` / `password` | 上游代理凭据 |
 | `expected_ip` | CLI 启动时要求匹配的公网出口 IP |
 | `local_proxy` | CLI 使用的本地代理地址，默认 `http://127.0.0.1:8121` |
-| `timezone` / `locale` | 维护记录；当前扩展和 CLI 的时区、语言仍由代码中的设置决定 |
+| `timezone` / `locale` | 维护记录；扩展不改写日期或时区，语言仍由扩展代码设置；CLI 设置见启动脚本 |
 | `expires_at` | 到期日记录，当前不触发自动提醒或按日期拦截 |
 
 示例中的 `203.0.113.10` 是文档专用地址，不能用于真实联网。`0600` 权限限制文件访问，并不代表凭据经过加密。
@@ -183,7 +183,7 @@ export PATH="$HOME/.config/claude-residential/bin:$PATH"
 | [`gateway/split_proxy.py`](gateway/split_proxy.py) | SOCKS5 域名分流，端口 `8687` |
 | [`gateway/proxy.pac`](gateway/proxy.pac) | 浏览器自动代理规则 |
 | [`gateway/pac_server.py`](gateway/pac_server.py) | 本地 PAC 服务，端口 `8899` |
-| [`extension/`](extension/) | Chrome 扩展 v2.3.0 |
+| [`extension/`](extension/) | Chrome 扩展 v2.3.1 |
 | [`bin/`](bin/) | Claude CLI 包装器与配置目录入口 |
 | [`config/`](config/) | 脱敏配置示例 |
 | [`macos/`](macos/) | 守护脚本、Swift helper 源码模板与 launchd 模板 |
@@ -230,6 +230,8 @@ helper 从用户目录读取 PAC 作为配置数据，但 root 执行的脚本�
 
 ### 本地复测
 
+完整测试需要 Python 3 和 Node.js 22 或更新版本（日期回归使用 Node 的 Blob / Object URL 与隔离执行环境）。
+
 ```sh
 # 离线回归测试：不读取真实凭据、不访问外网
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
@@ -268,7 +270,7 @@ bash -n macos/proxy-guard.sh
 
 - **域名覆盖**：只有已列入名单且实际使用这些代理组件的请求受规则约束。新增第三方域名和银行验证页面不保证覆盖。
 - **配置文件隔离**：Chrome 独立配置文件提供存储层面的逻辑隔离，不等于独立硬件或操作系统。
-- **Worker 覆盖**：扩展仅包装部分非 module 的 blob/data Worker，未完整覆盖外部 URL Worker、module Worker 和所有 Date 方法。
+- **Worker 覆盖**：扩展仅对部分非 module 的 blob/data Worker 设置语言，未覆盖外部 URL Worker 和 module Worker；主页面及 Worker 的 Date / Intl.DateTimeFormat 均保持原生。
 - **CLI 隔离**：启动前出口检查与代理环境变量不等于操作系统级网络隔离，也不保证所有子进程都遵循代理设置。
 - **平台认证**：网络连通或第三方 IP 评分不能证明平台不会要求 KYC、验证码或银行卡认证。手机内购也不能被承诺为免 KYC 通道；账单地址应使用发卡行登记的真实地址。
 

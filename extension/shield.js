@@ -1,9 +1,8 @@
-// Claude 智能分网站美区环境护盾 v2.3.0
+// Claude 智能分网站美区环境护盾 v2.3.1
 // 仅在 Claude 全系、Google 账号/Gmail/搜索、Stripe 支付收银台、人机验证盾、设备指纹探针与验真检测页生效，日常国内网站零触发
 (function () {
   "use strict";
 
-  const TARGET_TZ = "America/New_York";
   const TARGET_LOCALE = "en-US";
 
   // 记录已完成保护注入的窗口对象，确保同源动态空白 iframe 幂等零重复执行
@@ -35,58 +34,18 @@
     return prefix + families.join(", ");
   }
 
-  // Worker 后台线程前导环境对齐脚本（防止反欺诈引擎在 Blob/Data Worker 线程内对比时区与语言穿帮）
+  // 保留既有 Worker 语言设置；时间接口使用浏览器原生实现。
   const WORKER_BOOTSTRAP_CODE = "(" + function () {
     "use strict";
     try {
-      const TZ = "America/New_York";
       const LOC = "en-US";
       const LANGS = Object.freeze(["en-US", "en"]);
-      const OrigDTF = self.Intl && self.Intl.DateTimeFormat;
-      const OrigDate = self.Date;
       if (self.Navigator && self.Navigator.prototype) {
         Object.defineProperty(self.Navigator.prototype, "language", { get: function () { return LOC; }, configurable: true });
         Object.defineProperty(self.Navigator.prototype, "languages", { get: function () { return LANGS; }, configurable: true });
       } else if (self.WorkerNavigator && self.WorkerNavigator.prototype) {
         Object.defineProperty(self.WorkerNavigator.prototype, "language", { get: function () { return LOC; }, configurable: true });
         Object.defineProperty(self.WorkerNavigator.prototype, "languages", { get: function () { return LANGS; }, configurable: true });
-      }
-      if (OrigDTF) {
-        const WrappedDTF = function DateTimeFormat(locales, options) {
-          const loc = (locales === undefined) ? LOC : locales;
-          let opts = options;
-          if (opts === undefined) {
-            opts = { timeZone: TZ };
-          } else if (opts && typeof opts === "object" && opts.timeZone === undefined) {
-            opts = Object.assign({}, opts, { timeZone: TZ });
-          }
-          return new.target ? new OrigDTF(loc, opts) : OrigDTF(loc, opts);
-        };
-        WrappedDTF.prototype = OrigDTF.prototype;
-        Object.setPrototypeOf(WrappedDTF, OrigDTF);
-        if (typeof OrigDTF.supportedLocalesOf === "function") {
-          WrappedDTF.supportedLocalesOf = OrigDTF.supportedLocalesOf.bind(OrigDTF);
-        }
-        self.Intl.DateTimeFormat = WrappedDTF;
-      }
-      if (OrigDTF && OrigDate) {
-        const offsetFmt = new OrigDTF("en-US", { timeZone: TZ, timeZoneName: "shortOffset" });
-        const calcOffset = function (d) {
-          const ms = OrigDate.prototype.getTime.call(d);
-          if (Number.isNaN(ms)) return NaN;
-          const parts = offsetFmt.formatToParts(d);
-          for (let i = 0; i < parts.length; i++) {
-            if (parts[i].type === "timeZoneName") {
-              const m = parts[i].value.match(/GMT([+-])(\d+)(?::(\d+))?/);
-              if (m) {
-                const sign = m[1] === "-" ? 1 : -1;
-                return sign * ((parseInt(m[2], 10) || 0) * 60 + (parseInt(m[3] || "0", 10) || 0));
-              }
-            }
-          }
-          return 240;
-        };
-        OrigDate.prototype.getTimezoneOffset = function getTimezoneOffset() { return calcOffset(this); };
       }
     } catch (_) {}
   }.toString() + ")();\n";
@@ -101,11 +60,9 @@
     }
 
     const RealmIntl = win.Intl;
-    const OrigDateTimeFormat = RealmIntl && RealmIntl.DateTimeFormat;
-    const OrigDate = win.Date;
     const RealmObject = win.Object || Object;
     const RealmFunction = win.Function;
-    if (!OrigDateTimeFormat || !OrigDate || !RealmFunction) return;
+    if (!RealmIntl || !RealmFunction) return;
 
     const US_LANGS = RealmObject.freeze(["en-US", "en"]);
 
@@ -150,29 +107,8 @@
       }
     } catch (_) {}
 
-    // 2. 锁定 Intl 系统时区为 America/New_York 及默认区域为 en-US
+    // 2. 保留既有非日期格式的语言设置；不改写 Intl.DateTimeFormat。
     try {
-      const WrappedDTF = function DateTimeFormat(locales, options) {
-        const loc = (locales === undefined) ? TARGET_LOCALE : locales;
-        let opts = options;
-        if (opts === undefined) {
-          opts = { timeZone: TARGET_TZ };
-        } else if (opts && typeof opts === "object" && opts.timeZone === undefined) {
-          opts = RealmObject.assign({}, opts, { timeZone: TARGET_TZ });
-        }
-        if (new.target) {
-          return new OrigDateTimeFormat(loc, opts);
-        }
-        return OrigDateTimeFormat(loc, opts);
-      };
-      WrappedDTF.prototype = OrigDateTimeFormat.prototype;
-      RealmObject.setPrototypeOf(WrappedDTF, OrigDateTimeFormat);
-      if (typeof OrigDateTimeFormat.supportedLocalesOf === "function") {
-        WrappedDTF.supportedLocalesOf = OrigDateTimeFormat.supportedLocalesOf.bind(OrigDateTimeFormat);
-      }
-      markNative(WrappedDTF, "DateTimeFormat");
-      RealmIntl.DateTimeFormat = WrappedDTF;
-
       ["NumberFormat", "Collator", "PluralRules", "RelativeTimeFormat", "ListFormat"].forEach(function (name) {
         const Orig = RealmIntl[name];
         if (typeof Orig !== "function") return;
@@ -193,100 +129,7 @@
       });
     } catch (_) {}
 
-    // 3. 动态计算并锁定 Date 时区偏移为美东时间 UTC-4 / UTC-5（自动兼容夏令时与冬令时）
-    try {
-      const offsetFmt = new OrigDateTimeFormat("en-US", {
-        timeZone: TARGET_TZ,
-        timeZoneName: "shortOffset"
-      });
-      const longTzFmt = new OrigDateTimeFormat("en-US", {
-        timeZone: TARGET_TZ,
-        timeZoneName: "long"
-      });
-      const partsFmt = new OrigDateTimeFormat("en-US", {
-        timeZone: TARGET_TZ,
-        weekday: "short",
-        year: "numeric",
-        month: "short",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false
-      });
-
-      function getNYOffsetMinutes(dateObj) {
-        const ms = OrigDate.prototype.getTime.call(dateObj);
-        if (Number.isNaN(ms)) return NaN;
-        const parts = offsetFmt.formatToParts(dateObj);
-        for (let i = 0; i < parts.length; i++) {
-          if (parts[i].type === "timeZoneName") {
-            const m = parts[i].value.match(/GMT([+-])(\d+)(?::(\d+))?/);
-            if (m) {
-              const sign = m[1] === "-" ? 1 : -1;
-              const hrs = parseInt(m[2], 10) || 0;
-              const mins = parseInt(m[3] || "0", 10) || 0;
-              return sign * (hrs * 60 + mins);
-            }
-          }
-        }
-        return 240;
-      }
-
-      function formatNYStrings(dateObj) {
-        const off = getNYOffsetMinutes(dateObj);
-        if (Number.isNaN(off)) return { dateStr: "Invalid Date", timeStr: "Invalid Date", fullStr: "Invalid Date" };
-        const map = {};
-        partsFmt.formatToParts(dateObj).forEach(function (p) { map[p.type] = p.value; });
-        const hour = map.hour === "24" ? "00" : map.hour;
-        const sign = off <= 0 ? "+" : "-";
-        const abs = Math.abs(off);
-        const hh = String(Math.floor(abs / 60)).padStart(2, "0");
-        const mm = String(abs % 60).padStart(2, "0");
-        let tzLong = "Eastern Daylight Time";
-        longTzFmt.formatToParts(dateObj).forEach(function (p) {
-          if (p.type === "timeZoneName") tzLong = p.value;
-        });
-        const datePart = map.weekday + " " + map.month + " " + map.day + " " + map.year;
-        const timePart = hour + ":" + map.minute + ":" + map.second + " GMT" + sign + hh + mm + " (" + tzLong + ")";
-        return {
-          dateStr: datePart,
-          timeStr: timePart,
-          fullStr: datePart + " " + timePart
-        };
-      }
-
-      OrigDate.prototype.getTimezoneOffset = markNative(function getTimezoneOffset() {
-        return getNYOffsetMinutes(this);
-      }, "getTimezoneOffset");
-
-      OrigDate.prototype.toString = markNative(function toString() {
-        return formatNYStrings(this).fullStr;
-      }, "toString");
-
-      OrigDate.prototype.toTimeString = markNative(function toTimeString() {
-        return formatNYStrings(this).timeStr;
-      }, "toTimeString");
-
-      OrigDate.prototype.toDateString = markNative(function toDateString() {
-        return formatNYStrings(this).dateStr;
-      }, "toDateString");
-
-      ["toLocaleString", "toLocaleDateString", "toLocaleTimeString"].forEach(function (fnName) {
-        const origFn = OrigDate.prototype[fnName];
-        if (typeof origFn !== "function") return;
-        OrigDate.prototype[fnName] = markNative(function (locales, options) {
-          const loc = (locales === undefined) ? TARGET_LOCALE : locales;
-          let opts = options;
-          if (opts === undefined) {
-            opts = { timeZone: TARGET_TZ };
-          } else if (opts && typeof opts === "object" && opts.timeZone === undefined) {
-            opts = RealmObject.assign({}, opts, { timeZone: TARGET_TZ });
-          }
-          return origFn.call(this, loc, opts);
-        }, fnName);
-      });
-    } catch (_) {}
+    // 3. Date 与 Intl.DateTimeFormat 保持原生，确保构造、读取、格式化及 Worker 一致。
 
     // 4. 拦截 Canvas 宽度法与 FontFaceSet 对中文字体的指纹探测（不影响网页正常显示高清中文）
     function patchCanvasFont(proto) {
@@ -374,7 +217,7 @@
       }
     } catch (_) {}
 
-    // 7. 守护同源动态空白 iframe（封堵反欺诈探针同步创建 about:blank 子窗口偷读原生时区与语言）
+    // 7. 将既有语言等设置应用于同源动态空白 iframe；日期与时区仍使用原生接口。
     try {
       if (win.HTMLIFrameElement && win.HTMLIFrameElement.prototype) {
         const iframeProto = win.HTMLIFrameElement.prototype;
@@ -413,7 +256,7 @@
       }
     } catch (_) {}
 
-    // 8. 守护内联 Blob / Data Web Worker 后台线程，消除主线程与 Worker 线程时区语言不一致警报
+    // 8. 保留内联 Blob / Data Web Worker 的语言设置，不更改其时间接口。
     try {
       const OrigWorker = win.Worker;
       const OrigBlob = win.Blob;

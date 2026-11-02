@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Claude 美区住宅安全护盾",
-  "version": "2.3.0",
-  "description": "全链路美区住宅防护：全局阻断 WebRTC 宽带泄露；在 Claude、Google 账号/Gmail/搜索、Stripe 收银台、验证盾、指纹探针及验真页自动统一美东时区与美式英语环境，日常办公零影响。",
+  "version": "2.3.1",
+  "description": "全链路美区住宅防护：全局阻断 WebRTC 宽带泄露；在 Claude、Google 账号/Gmail/搜索、Stripe 收银台、验证盾、指纹探针及验真页设置美式英语，保留浏览器原生时间接口。",
   "icons": {
     "128": "icon128.png"
   },
