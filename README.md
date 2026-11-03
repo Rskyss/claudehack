@@ -6,11 +6,11 @@
 
 让指定站点使用明确的代理出口，让日常流量继续遵循原有网络设置。
 
-![Repository: v0.1.2](https://img.shields.io/badge/repository-v0.1.2-182b40?style=flat-square)
+![Repository: v0.2](https://img.shields.io/badge/repository-v0.2-182b40?style=flat-square)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-182b40?style=flat-square)
 ![Python: 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square)
 ![Dependencies: Python standard library](https://img.shields.io/badge/dependencies-stdlib-4b7861?style=flat-square)
-![Chrome extension: v2.3.1](https://img.shields.io/badge/extension-v2.3.1-c98769?style=flat-square)
+![Chrome extension: v2.4.0](https://img.shields.io/badge/extension-v2.4.0-c98769?style=flat-square)
 
 [安装方式](#安装方式) · [工作原理](#工作原理) · [快速开始](#快速开始) · [项目结构](#项目结构) · [验证与测试](#验证与测试) · [能力边界](#能力边界)
 
@@ -26,10 +26,10 @@ ClaudeHack 将 **HTTP CONNECT 网关、SOCKS5 分流、PAC、Chrome 扩展与 CL
 
 | 能力 | 实现方式 |
 | :--- | :--- |
-| **按域名分流** | PAC 与 SOCKS5 分流器使用 78 个保护域名后缀、10 个豁免子域 |
+| **按域名分流** | PAC 与 SOCKS5 分流器使用 91 个保护域名后缀、10 个豁免子域（含 Muse / Meta AI） |
 | **代理失败时拒绝请求** | 命中保护名单的 PAC 结果不含 `DIRECT`；网关配置无效时拒绝新连接 |
 | **连接重试与清理** | 错峰并发、渐进退避，并处理超时后的迟到连接和转发失败资源回收 |
-| **浏览器环境设置** | Chrome 扩展在匹配页面调整语言并限制非代理 WebRTC UDP；时间接口保持浏览器原生行为 |
+| **浏览器环境设置** | Chrome 扩展在 Claude、Muse/Meta AI、Google、支付与验真等匹配页面调整语言并限制非代理 WebRTC UDP；时间接口保持浏览器原生行为 |
 | **CLI 启动校验** | 启动前检查实际出口，注入代理环境变量，提供独立配置目录入口 |
 | **macOS 常驻运行** | 提供 launchd 模板及由 root 管理的代理守护程序部署方案 |
 
@@ -74,7 +74,7 @@ flowchart LR
 3. 把解压目录放在你准备长期保留的位置。在要使用插件的 Chrome 配置文件中，打开 `chrome://extensions`。
 4. 打开右上角的 **开发者模式**，点击 **加载已解压的扩展程序**。
 5. 选择 **`extension` 文件夹**。不要选择 ZIP 文件、整个 `claudehack-main` 项目目录或单独的 `manifest.json` 文件。
-6. 确认扩展列表出现 **Claude 美区住宅安全护盾**、版本 **2.3.1**，处于启用状态，且没有加载错误；重新加载希望应用设置的网页。
+6. 确认扩展列表出现 **Claude 美区住宅安全护盾**、版本 **2.4.0**，处于启用状态，且没有加载错误；重新加载希望应用设置的网页。
 
 加载后请保留该文件夹。移动或删除它可能导致扩展无法加载。后续更新文件后，在扩展管理页面点击该扩展的刷新按钮，再刷新目标网页。
 
@@ -183,7 +183,7 @@ export PATH="$HOME/.config/claude-residential/bin:$PATH"
 | [`gateway/split_proxy.py`](gateway/split_proxy.py) | SOCKS5 域名分流，端口 `8687` |
 | [`gateway/proxy.pac`](gateway/proxy.pac) | 浏览器自动代理规则 |
 | [`gateway/pac_server.py`](gateway/pac_server.py) | 本地 PAC 服务，端口 `8899` |
-| [`extension/`](extension/) | Chrome 扩展 v2.3.1 |
+| [`extension/`](extension/) | Chrome 扩展 v2.4.0 |
 | [`bin/`](bin/) | Claude CLI 包装器与配置目录入口 |
 | [`config/`](config/) | 脱敏配置示例 |
 | [`macos/`](macos/) | 守护脚本、Swift helper 源码模板与 launchd 模板 |
@@ -247,7 +247,8 @@ bash -n macos/proxy-guard.sh
 
 | 检查 | 结果与范围 |
 | :--- | :--- |
-| 网关回归测试 | **9 项通过**；覆盖配置异常、热加载、正常隧道、重试上限、迟到连接和异常清理 |
+| 全量 unittest（2026-11-03） | **25 项通过**；含网关、扩展时间回归、推送钩子，以及 PAC / SOCKS / 扩展五处名单一致性 |
+| 网关回归测试（2026-10-31） | **9 项通过**；覆盖配置异常、热加载、正常隧道、重试上限、迟到连接和异常清理 |
 | HTTP / HTTPS 出口 | 临时与正式网关的出口核验通过 |
 | Stripe 脚本请求 | HTTP `200` |
 | Claude / Persona 命令行探测 | TLS 连接成功，HTTP `403`；仅能确认传输连通，不能视为账号或支付验证通过 |

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """本地 SOCKS5 兜底分流器（监听 127.0.0.1:8687）。
 
-所有 Claude、Google 账号/Gmail/搜索、Stripe 支付收银台、人机验证盾、设备指纹探针及验真站域名
+所有 Claude、Muse/Meta AI、Google 账号/Gmail/搜索、Stripe 支付收银台、人机验证盾、设备指纹探针及验真站域名
 统一转发至核心住宅网关 127.0.0.1:8121。
 大流量下载/更新子域及普通日常网站（含 YouTube 视频）直接放行，走日常系统网络通道（心安/RelyVPN）。
 """
@@ -114,6 +114,20 @@ SUFFIXES = (
     "browserleaks.net",
     "browserleaks.org",
     "creepjs.com",
+    # 8. Meta Muse AI 智能体与 Meta 账号认证全系
+    "muse.ai",
+    "meta.ai",
+    "meta.com",
+    "metaaivm.com",
+    "metaaiusercontent.com",
+    "ecto1usercontent.com",
+    "meta-agents-apps.workers.dev",
+    "facebook.com",
+    "facebook.net",
+    "fbcdn.net",
+    "fbsbx.com",
+    "instagram.com",
+    "cdninstagram.com",
 )
 
 

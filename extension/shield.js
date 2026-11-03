@@ -1,5 +1,5 @@
-// Claude 智能分网站美区环境护盾 v2.3.1
-// 仅在 Claude 全系、Google 账号/Gmail/搜索、Stripe 支付收银台、人机验证盾、设备指纹探针与验真检测页生效，日常国内网站零触发
+// Claude 智能分网站美区环境护盾 v2.4.0
+// 仅在 Claude 全系、Muse/Meta AI 全系、Google 账号/Gmail/搜索、Stripe 支付收银台、人机验证盾、设备指纹探针与验真检测页生效，日常国内网站零触发
 (function () {
   "use strict";
 

@@ -91,7 +91,20 @@
         "browserleaks.com",
         "browserleaks.net",
         "browserleaks.org",
-        "creepjs.com"
+        "creepjs.com",
+        "muse.ai",
+        "meta.ai",
+        "meta.com",
+        "metaaivm.com",
+        "metaaiusercontent.com",
+        "ecto1usercontent.com",
+        "meta-agents-apps.workers.dev",
+        "facebook.com",
+        "facebook.net",
+        "fbcdn.net",
+        "fbsbx.com",
+        "instagram.com",
+        "cdninstagram.com"
       ],
       "excludedRequestDomains": [
         "dl.google.com",
