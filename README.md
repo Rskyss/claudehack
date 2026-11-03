@@ -6,7 +6,7 @@
 
 让指定站点使用明确的代理出口，让日常流量继续遵循原有网络设置。
 
-![Repository: v0.2](https://img.shields.io/badge/repository-v0.2-182b40?style=flat-square)
+![Repository: v0.3](https://img.shields.io/badge/repository-v0.3-182b40?style=flat-square)
 ![Platform: macOS](https://img.shields.io/badge/platform-macOS-182b40?style=flat-square)
 ![Python: 3.9+](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square)
 ![Dependencies: Python standard library](https://img.shields.io/badge/dependencies-stdlib-4b7861?style=flat-square)
@@ -32,16 +32,26 @@ ClaudeHack 将 **HTTP CONNECT 网关、SOCKS5 分流、PAC、Chrome 扩展与 CL
 | **浏览器环境设置** | Chrome 扩展在 Claude、Muse/Meta AI、Google、支付与验真等匹配页面调整语言并限制非代理 WebRTC UDP；时间接口保持浏览器原生行为 |
 | **CLI 启动校验** | 启动前检查实际出口，注入代理环境变量，提供独立配置目录入口 |
 | **macOS 常驻运行** | 提供 launchd 模板及由 root 管理的代理守护程序部署方案 |
+| **AI 辅助部署与真机自检** | 提供面向外部 AI 的[安装与体检指南](docs/AI安装指南.md)及 `bin/env-check` 真机环境自检工具 |
 
 ## 安装方式
 
-**这是包含 Chrome 插件的源码项目。** 你可以只安装插件，也可以在 macOS 上部署完整代理环境。当前没有一键安装器，下载 ZIP 本身不会启动代理服务。
+**这是包含 Chrome 插件的源码项目。** 你可以只安装插件，也可以在 macOS 上部署完整代理环境；如果你不熟悉命令行，也可以直接复制下方口令交给你的 AI 助手代为安装与体检。
 
 | 你的目标 | 应该怎么安装 | 需要什么 |
 | :--- | :--- | :--- |
+| **非技术普通用户：让 AI 帮我装好并检查** | 复制下方 **AI 安装口令** 发给 Claude Code / Cursor / Codex 等 AI 工具，由 AI 按 [AI 安装指南](docs/AI安装指南.md) 交互式部署并跑真机自检 | 本地 AI 工具、Chrome；若装完整代理环境需 macOS、Python 与自备上游代理 |
 | 只使用插件的网页语言和 WebRTC 设置 | 按下方 **A：只安装 Chrome 插件** 加载 `extension` 文件夹 | Chrome；无需 Python 或运行代理服务 |
 | 使用本项目的指定代理出口和域名分流 | 按 **B：完整代理环境** 部署服务、填写上游配置并设置 PAC；插件按 A 单独加载 | macOS、Python、自备可用的上游代理 |
-| 已经装好并正常使用 | 继续使用现有环境 | 无需重新安装或重复启动服务 |
+| 已经装好并正常使用 | 继续使用现有环境，可随时运行 `python3 bin/env-check` 做真机环境自检 | 无需重新安装或重复启动服务 |
+
+### 非技术用户：一键复制给 AI 助手的安装口令
+
+如果你不熟悉终端命令，把本仓库下载解压（或提供仓库地址 `https://github.com/Rskyss/claudehack`）后，直接把下面这段话发给你的本地 AI 助手：
+
+```text
+请先阅读这个仓库里的 docs/AI安装指南.md，按照里面的步骤帮我在电脑上完成“本地代理 + 浏览器分流与护盾插件”的全环境整理。需要我提供上游代理地址、端口、账号、密码的地方请直接用中文问我；安装完成后请运行 bin/env-check 帮我做一次真机环境体检并告诉我结果。
+```
 
 **插件不包含住宅 IP，也不负责配置 PAC 或代理。** 只安装插件，网页仍使用浏览器原有网络出口；完整的网络分流需要本地服务与代理配置配合。
 
@@ -184,9 +194,10 @@ export PATH="$HOME/.config/claude-residential/bin:$PATH"
 | [`gateway/proxy.pac`](gateway/proxy.pac) | 浏览器自动代理规则 |
 | [`gateway/pac_server.py`](gateway/pac_server.py) | 本地 PAC 服务，端口 `8899` |
 | [`extension/`](extension/) | Chrome 扩展 v2.4.0 |
-| [`bin/`](bin/) | Claude CLI 包装器与配置目录入口 |
+| [`bin/`](bin/) | Claude CLI 包装器、配置目录入口与真机环境自检工具 [`bin/env-check`](bin/env-check) |
 | [`config/`](config/) | 脱敏配置示例 |
 | [`macos/`](macos/) | 守护脚本、Swift helper 源码模板与 launchd 模板 |
+| [`docs/AI安装指南.md`](docs/AI安装指南.md) | 面向外部 AI 助手的交互式安装、浏览器分流挂载与真机体检指南 |
 | [`tests/`](tests/) | 离线回归测试 |
 
 ## macOS 常驻部署
@@ -228,9 +239,21 @@ helper 从用户目录读取 PAC 作为配置数据，但 root 执行的脚本�
 
 ## 验证与测试
 
-### 本地复测
+### 1. 真机环境自检（检查当前机器是否配置就绪）
 
-完整测试需要 Python 3 和 Node.js 22 或更新版本（日期回归使用 Node 的 Blob / Object URL 与隔离执行环境）。
+部署完成后，运行以下命令检查本机 `residential.json` 权限与有效性、三个本地服务端口、系统 PAC 挂载状态、扩展文件完整性以及实际代理出口 IP：
+
+```sh
+# 完整真机自检（含通过 127.0.0.1:8121 核验实际公网出口 IP）
+python3 bin/env-check
+
+# 仅检查本机配置、服务监听与系统 PAC 挂载，不发起外网请求
+python3 bin/env-check --offline
+```
+
+### 2. 仓库代码离线回归测试
+
+完整代码测试需要 Python 3 和 Node.js 22 或更新版本（日期回归使用 Node 的 Blob / Object URL 与隔离执行环境）。
 
 ```sh
 # 离线回归测试：不读取真实凭据、不访问外网
@@ -243,11 +266,11 @@ bash -n macos/proxy-guard.sh
 
 ### 已记录的验收
 
-以下是 **2026-10-31 的本机验证记录**，不是持续集成或实时服务状态。
+以下是 **2026-10-31 至 2026-11-03 的本机验证记录**，不是持续集成或实时服务状态。
 
 | 检查 | 结果与范围 |
 | :--- | :--- |
-| 全量 unittest（2026-11-03） | **25 项通过**；含网关、扩展时间回归、推送钩子，以及 PAC / SOCKS / 扩展五处名单一致性 |
+| 全量 unittest（2026-11-03） | **33 项通过**；含网关、扩展时间回归、推送钩子、五处名单一致性及 `env-check` 环境自检测试 |
 | 网关回归测试（2026-10-31） | **9 项通过**；覆盖配置异常、热加载、正常隧道、重试上限、迟到连接和异常清理 |
 | HTTP / HTTPS 出口 | 临时与正式网关的出口核验通过 |
 | Stripe 脚本请求 | HTTP `200` |

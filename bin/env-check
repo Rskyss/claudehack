@@ -1,0 +1,453 @@
+#!/usr/bin/env python3
+"""ClaudeHack 本地与浏览器分流环境真机自检工具。
+
+检查范围：
+1. 本地住宅代理配置文件（~/.config/claude-residential/residential.json）权限与有效性（不输出凭据原文）。
+2. 本地三个回环服务（8121 网关、8687 SOCKS5 分流、8899 PAC 服务）监听与 PAC 脚本响应。
+3. 系统 / 浏览器 PAC 自动代理挂载状态（scutil --proxy 或 Chrome ProxySettings 管理策略）。
+4. Chrome 扩展目录文件完整性（extension/ v2.4.0）。
+5. 经本地网关（127.0.0.1:8121）的实际公网出口 IP 与 expected_ip 比对。
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import plistlib
+import socket
+import stat
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+from typing import Callable
+
+DEFAULT_CONFIG_PATH = Path.home() / ".config" / "claude-residential" / "residential.json"
+DEFAULT_EXTENSION_DIR = Path(__file__).resolve().parents[1] / "extension"
+EXPECTED_PAC_PREFIX = "http://127.0.0.1:8899/proxy.pac"
+PLACEHOLDER_VALUES = {"203.0.113.10", "REPLACE_ME", "YYYY-MM-DD", ""}
+
+
+def _default_port_checker(host: str, port: int) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=1.5):
+            return True
+    except OSError:
+        return False
+
+
+def _default_pac_fetcher(url: str) -> str:
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(url, timeout=2.0) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
+def _default_scutil_runner() -> str:
+    try:
+        proc = subprocess.run(
+            ["/usr/sbin/scutil", "--proxy"],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+            check=False,
+        )
+        return proc.stdout or ""
+    except Exception:
+        return ""
+
+
+def _default_chrome_policy_runner() -> str:
+    chunks: list[str] = []
+    managed_paths = (
+        Path("/Library/Managed Preferences/com.google.Chrome.plist"),
+        Path.home() / "Library" / "Managed Preferences" / "com.google.Chrome.plist",
+    )
+    for plist_path in managed_paths:
+        if plist_path.is_file():
+            try:
+                data = plistlib.loads(plist_path.read_bytes())
+                chunks.append(json.dumps(data, ensure_ascii=False, default=str))
+            except Exception:
+                pass
+    try:
+        proc = subprocess.run(
+            ["/usr/bin/defaults", "read", "com.google.Chrome", "ProxySettings"],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+            check=False,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            chunks.append(proc.stdout)
+    except Exception:
+        pass
+    return "\n".join(chunks)
+
+
+def _default_egress_fetcher(proxy_url: str) -> str:
+    for endpoint in ("https://api.ipify.org", "https://ipinfo.io/ip"):
+        try:
+            proc = subprocess.run(
+                [
+                    "/usr/bin/curl",
+                    "-sS",
+                    "--noproxy",
+                    "",
+                    "--connect-timeout",
+                    "8",
+                    "--max-time",
+                    "12",
+                    "-x",
+                    proxy_url,
+                    endpoint,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=14.0,
+                check=False,
+            )
+            ip = (proc.stdout or "").strip()
+            if proc.returncode == 0 and ip:
+                return ip
+        except Exception:
+            continue
+    return ""
+
+
+def _non_empty_str(raw: dict, key: str) -> str:
+    val = raw.get(key)
+    return val.strip() if isinstance(val, str) else ""
+
+
+def check_config(config_path: Path) -> tuple[dict, str, str]:
+    """验证配置文件存在、权限 0600 且关键字段非占位符。返回 (结果项, 安全 local_proxy, expected_ip)。"""
+    default_proxy = "http://127.0.0.1:8121"
+    if not config_path.exists():
+        return (
+            {
+                "ok": False,
+                "title": "本地住宅配置",
+                "detail": f"未找到配置文件 {config_path}（请先从 config/residential.example.json 复制并填写）",
+            },
+            default_proxy,
+            "",
+        )
+
+    try:
+        st = config_path.stat()
+        mode = stat.S_IMODE(st.st_mode)
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError("top-level JSON must be an object")
+    except Exception:
+        return (
+            {
+                "ok": False,
+                "title": "本地住宅配置",
+                "detail": f"配置文件 {config_path} 无法读取或 JSON 格式损坏",
+            },
+            default_proxy,
+            "",
+        )
+
+    problems: list[str] = []
+    if mode != 0o600:
+        problems.append(f"文件权限当前为 {oct(mode)}，必须设为 0600（chmod 600）")
+
+    host = _non_empty_str(raw, "host")
+    username = _non_empty_str(raw, "username")
+    password = _non_empty_str(raw, "password")
+    expected_ip = _non_empty_str(raw, "expected_ip")
+
+    raw_local_proxy = raw.get("local_proxy", default_proxy)
+    if not isinstance(raw_local_proxy, str) or not raw_local_proxy.strip():
+        local_proxy = default_proxy
+    elif "@" in raw_local_proxy:
+        problems.append("local_proxy 不能包含账号密码凭据（应为 http://127.0.0.1:8121）")
+        local_proxy = default_proxy
+    else:
+        local_proxy = raw_local_proxy.strip()
+
+    try:
+        port_val = raw.get("port")
+        if isinstance(port_val, bool) or not isinstance(port_val, (int, str)):
+            raise ValueError("invalid port type")
+        port = int(port_val)
+        if not (1 <= port <= 65535):
+            problems.append("port 超出有效范围 (1-65535)")
+    except Exception:
+        problems.append("port 不是有效整数")
+
+    if not host or host in PLACEHOLDER_VALUES or "REPLACE" in host:
+        problems.append("host 未填写或仍为示例地址")
+    if not username or username in PLACEHOLDER_VALUES or "REPLACE" in username:
+        problems.append("username 未填写或仍为示例占位符")
+    if not password or password in PLACEHOLDER_VALUES or "REPLACE" in password:
+        problems.append("password 未填写或仍为示例占位符")
+    if not expected_ip or expected_ip in PLACEHOLDER_VALUES or "REPLACE" in expected_ip:
+        problems.append("expected_ip 未填写或仍为示例地址")
+
+    if problems:
+        return (
+            {
+                "ok": False,
+                "title": "本地住宅配置",
+                "detail": "；".join(problems),
+            },
+            local_proxy,
+            expected_ip,
+        )
+
+    return (
+        {
+            "ok": True,
+            "title": "本地住宅配置",
+            "detail": f"已就绪（权限 0600，目标出口 {expected_ip}，本地网关 {local_proxy}）",
+        },
+        local_proxy,
+        expected_ip,
+    )
+
+
+def check_services(
+    port_checker: Callable[[str, int], bool],
+    pac_fetcher: Callable[[str], str],
+) -> dict:
+    ports = [
+        (8121, "HTTP 网关 (8121)"),
+        (8687, "SOCKS5 分流 (8687)"),
+        (8899, "PAC 服务 (8899)"),
+    ]
+    down = [label for port, label in ports if not port_checker("127.0.0.1", port)]
+    if down:
+        return {
+            "ok": False,
+            "title": "本地三个后台服务",
+            "detail": "未监听：" + "、".join(down),
+        }
+
+    try:
+        pac_body = pac_fetcher(f"{EXPECTED_PAC_PREFIX}?v=8")
+        if "FindProxyForURL" not in pac_body:
+            return {
+                "ok": False,
+                "title": "本地三个后台服务",
+                "detail": "8899 端口已监听，但返回内容不含有效的 FindProxyForURL 规则",
+            }
+    except Exception:
+        return {
+            "ok": False,
+            "title": "本地三个后台服务",
+            "detail": "无法从 http://127.0.0.1:8899/proxy.pac?v=8 读取 PAC 脚本",
+        }
+
+    return {
+        "ok": True,
+        "title": "本地三个后台服务",
+        "detail": "8121 网关、8687 分流、8899 PAC 服务均正常监听且规则可读",
+    }
+
+
+def check_browser_pac(
+    scutil_runner: Callable[[], str],
+    chrome_policy_runner: Callable[[], str] = _default_chrome_policy_runner,
+) -> dict:
+    output = scutil_runner()
+    enabled = "ProxyAutoConfigEnable : 1" in output
+    has_url = EXPECTED_PAC_PREFIX in output
+    if enabled and has_url:
+        return {
+            "ok": True,
+            "title": "系统 / 浏览器 PAC 分流挂载",
+            "detail": f"系统自动代理已启用并指向 {EXPECTED_PAC_PREFIX}",
+        }
+
+    policy_out = chrome_policy_runner()
+    if "pac_script" in policy_out and EXPECTED_PAC_PREFIX in policy_out:
+        return {
+            "ok": True,
+            "title": "系统 / 浏览器 PAC 分流挂载",
+            "detail": f"Chrome ProxySettings 管理策略已配置并指向 {EXPECTED_PAC_PREFIX}",
+        }
+
+    return {
+        "ok": False,
+        "title": "系统 / 浏览器 PAC 分流挂载",
+        "detail": (
+            f"系统自动代理与 Chrome ProxySettings 均未挂载 {EXPECTED_PAC_PREFIX}?v=8"
+            "（浏览器流量尚未自动接入本地分流，请配置系统自动代理或 Chrome PAC 策略）"
+        ),
+    }
+
+
+def check_extension_files(extension_dir: Path) -> dict:
+    if not extension_dir.exists():
+        return {
+            "ok": False,
+            "title": "Chrome 护盾扩展文件",
+            "detail": f"未找到扩展目录 {extension_dir}（若从独立目录运行，请用 --extension-dir 指定仓库 extension 文件夹路径）",
+        }
+
+    required = ("manifest.json", "shield.js", "rules.json", "background.js")
+    missing = [name for name in required if not (extension_dir / name).is_file()]
+    if missing:
+        return {
+            "ok": False,
+            "title": "Chrome 护盾扩展文件",
+            "detail": f"extension 目录缺少文件：{', '.join(missing)}",
+        }
+
+    try:
+        manifest = json.loads((extension_dir / "manifest.json").read_text(encoding="utf-8"))
+        version = str(manifest.get("version", ""))
+    except Exception:
+        return {
+            "ok": False,
+            "title": "Chrome 护盾扩展文件",
+            "detail": "extension/manifest.json 无法解析",
+        }
+
+    if not version:
+        return {
+            "ok": False,
+            "title": "Chrome 护盾扩展文件",
+            "detail": "extension/manifest.json 缺少版本号",
+        }
+
+    return {
+        "ok": True,
+        "title": "Chrome 护盾扩展文件",
+        "detail": f"扩展目录文件完整（版本 v{version}，路径 {extension_dir}）",
+    }
+
+
+def check_egress(
+    local_proxy: str,
+    expected_ip: str,
+    egress_fetcher: Callable[[str], str],
+    offline: bool = False,
+) -> dict:
+    if offline:
+        return {
+            "ok": True,
+            "title": "住宅代理出口实测",
+            "detail": "已跳过（--offline 离线模式不发起外网请求）",
+        }
+    if not expected_ip or expected_ip in PLACEHOLDER_VALUES or "REPLACE" in expected_ip:
+        return {
+            "ok": False,
+            "title": "住宅代理出口实测",
+            "detail": "未执行：请先在 residential.json 中填写有效的 expected_ip",
+        }
+
+    actual_ip = egress_fetcher(local_proxy).strip()
+    if not actual_ip:
+        return {
+            "ok": False,
+            "title": "住宅代理出口实测",
+            "detail": f"无法通过本地网关 ({local_proxy}) 获取公网出口 IP（请检查本地网关、上游代理凭据及日常前置 VPN）",
+        }
+    if actual_ip != expected_ip:
+        return {
+            "ok": False,
+            "title": "住宅代理出口实测",
+            "detail": f"实际出口 IP ({actual_ip}) 与配置锁定的 expected_ip ({expected_ip}) 不一致",
+        }
+    return {
+        "ok": True,
+        "title": "住宅代理出口实测",
+        "detail": f"出口核验通过，当前住宅出口 IP 为 {actual_ip}",
+    }
+
+
+def run_checks(
+    config_path: Path = DEFAULT_CONFIG_PATH,
+    extension_dir: Path = DEFAULT_EXTENSION_DIR,
+    port_checker: Callable[[str, int], bool] = _default_port_checker,
+    pac_fetcher: Callable[[str], str] = _default_pac_fetcher,
+    scutil_runner: Callable[[], str] = _default_scutil_runner,
+    chrome_policy_runner: Callable[[], str] = _default_chrome_policy_runner,
+    egress_fetcher: Callable[[str], str] = _default_egress_fetcher,
+    offline: bool = False,
+) -> dict:
+    cfg_res, local_proxy, expected_ip = check_config(config_path)
+    svc_res = check_services(port_checker, pac_fetcher)
+    pac_res = check_browser_pac(scutil_runner, chrome_policy_runner)
+    ext_res = check_extension_files(extension_dir)
+    egr_res = check_egress(local_proxy, expected_ip, egress_fetcher, offline=offline)
+
+    items = {
+        "config": cfg_res,
+        "services": svc_res,
+        "browser_pac": pac_res,
+        "extension": ext_res,
+        "egress": egr_res,
+    }
+    overall_ok = all(item["ok"] for item in items.values())
+    return {
+        "ok": overall_ok,
+        "items": items,
+    }
+
+
+def format_report(report: dict) -> str:
+    lines = ["=== ClaudeHack 本地与浏览器环境真机自检 ==="]
+    order = ("config", "services", "browser_pac", "extension", "egress")
+    for key in order:
+        item = report["items"][key]
+        icon = "✅" if item["ok"] else "❌"
+        lines.append(f"{icon} {item['title']}：{item['detail']}")
+
+    lines.append("")
+    if report["ok"]:
+        lines.append("结论：✅ 本地代理服务、系统/浏览器 PAC 分流与出口核验已就绪。")
+    else:
+        lines.append("结论：❌ 环境尚未完全就绪，请按上方 ❌ 项逐一修复后重跑自检。")
+
+    lines.append(
+        "提示：浏览器内仍需手动确认扩展已启用（chrome://extensions 显示 Claude 美区住宅安全护盾 v2.4.0）并刷新目标网页；"
+        "本检查仅验证本地路由与出口连通，不代表平台免验证码、免 KYC 或支付必然成功。"
+    )
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="ClaudeHack 本地与浏览器环境真机自检工具")
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG_PATH,
+        help="指定 residential.json 路径（默认 ~/.config/claude-residential/residential.json）",
+    )
+    parser.add_argument(
+        "--extension-dir",
+        type=Path,
+        default=DEFAULT_EXTENSION_DIR,
+        help="指定 Chrome 扩展目录路径",
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="仅检查本地配置、服务与 PAC 状态，不发起外网出口请求",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="以 JSON 格式输出检查结果",
+    )
+    args = parser.parse_args(argv)
+
+    report = run_checks(
+        config_path=args.config,
+        extension_dir=args.extension_dir,
+        offline=args.offline,
+    )
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_report(report))
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
